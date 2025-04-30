@@ -12,9 +12,8 @@ app = Flask(__name__)
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 SHARED_SECRET = os.getenv("SHARED_SECRET")
-BASE_URL = "https://paper-api.alpaca.markets"  # Change to live URL for live trading
-# Data API base for quotes/trades
-DATA_URL = "https://data.alpaca.markets/v2"
+BASE_URL = "https://paper-api.alpaca.markets"  # Trading API base
+DATA_URL = "https://data.alpaca.markets/v2"     # Data API base for quotes/trades
 
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
@@ -59,7 +58,29 @@ def webhook():
     take_profit = data.get("take_profit")
     stop_loss = data.get("stop_loss")
 
-    # Build base order
+    timestamp = datetime.utcnow().isoformat()
+    print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker}")
+
+    # Validate bracket order levels using Alpaca data API
+    if use_oco and take_profit and stop_loss:
+        try:
+            quote_url = f"{DATA_URL}/stocks/{ticker}/quotes/latest"
+            quote_response = requests.get(quote_url, headers=HEADERS)
+            quote_response.raise_for_status()
+            base_price = float(quote_response.json()["quote"]["ap"])
+            print(f"🔎 Base price for {ticker}: {base_price}")
+
+            if float(take_profit) <= base_price + 0.01:
+                return jsonify({"error": "take_profit must be > base_price + 0.01", "base_price": base_price}), 400
+
+            if float(stop_loss) >= base_price - 0.01:
+                return jsonify({"error": "stop_loss must be < base_price - 0.01", "base_price": base_price}), 400
+
+        except Exception as e:
+            print("❌ Error retrieving market price:", str(e))
+            return jsonify({"error": "Failed to retrieve market price", "details": str(e)}), 500
+
+    # Build order
     order = {
         "symbol": ticker,
         "qty": qty,
@@ -72,9 +93,6 @@ def webhook():
         order["order_class"] = "bracket"
         order["take_profit"] = {"limit_price": float(take_profit)}
         order["stop_loss"] = {"stop_price": float(stop_loss)}
-
-    timestamp = datetime.utcnow().isoformat()
-    print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker}")
 
     try:
         alpaca_url = f"{BASE_URL}/v2/orders"
