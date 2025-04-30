@@ -13,6 +13,8 @@ ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 SHARED_SECRET = os.getenv("SHARED_SECRET")
 BASE_URL = "https://paper-api.alpaca.markets"  # Change to live URL for live trading
+# Data API base for quotes/trades
+DATA_URL = "https://data.alpaca.markets/v2"
 
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
