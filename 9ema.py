@@ -19,14 +19,15 @@ HEADERS = {
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.get_json()
-    print("📩 Webhook received:", data)
+    data = request.get_json(force=True, silent=True)
 
     if not data:
-        return jsonify({"error": "Missing JSON"}), 400
+        return jsonify({"error": "Missing or invalid JSON"}), 400
 
     if data.get("secret") != SHARED_SECRET:
         return jsonify({"error": "Unauthorized"}), 403
+
+    # Continue with trade execution...
 
     # Parse trade info
     ticker = data.get("ticker")
