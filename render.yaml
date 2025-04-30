@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: nineema-flask-app
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: python 9ema.py
+    envVars:
+      - key: FLASK_ENV
+        value: production
