@@ -14,6 +14,7 @@ ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 SHARED_SECRET = os.getenv("SHARED_SECRET")
 BASE_URL = "https://paper-api.alpaca.markets"  # Trading API base
 DATA_URL = "https://data.alpaca.markets/v2"     # Data API base for quotes/trades
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
@@ -31,6 +32,16 @@ def status():
         "alpaca_key_loaded": bool(ALPACA_API_KEY),
         "timestamp": datetime.utcnow().isoformat()
     })
+
+@app.route("/orders", methods=["GET"])
+def orders():
+    try:
+        response = requests.get(f"{BASE_URL}/v2/orders", headers=HEADERS)
+        response.raise_for_status()
+        orders = response.json()
+        return jsonify({"status": "success", "orders": orders})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -105,6 +116,26 @@ def webhook():
 
         with open("trades_log.csv", "a") as f:
             f.write(f"{timestamp},{ticker},{action},{qty},{use_oco},{take_profit},{stop_loss}\n")
+
+        # Send to Discord with embedded format
+        if DISCORD_WEBHOOK_URL:
+            color = 3066993 if action.lower() == "buy" else 15158332
+            embed = {
+                "title": f"Trade Executed: {action.upper()} {qty}x {ticker}",
+                "color": color,
+                "fields": [
+                    {"name": "Take Profit", "value": f"{take_profit}", "inline": True},
+                    {"name": "Stop Loss", "value": f"{stop_loss}", "inline": True},
+                    {"name": "Filled At", "value": result.get("filled_avg_price", "n/a"), "inline": True}
+                ],
+                "timestamp": timestamp
+            }
+            discord_payload = {"embeds": [embed]}
+
+            try:
+                requests.post(DISCORD_WEBHOOK_URL, json=discord_payload)
+            except Exception as discord_err:
+                print("⚠️ Failed to send Discord notification:", str(discord_err))
 
         return jsonify({
             "status": "success",
