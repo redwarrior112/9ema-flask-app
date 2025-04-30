@@ -1,35 +1,40 @@
 from flask import Flask, request, jsonify
 import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  # ✅ Load .env variables
 
 app = Flask(__name__)
 
-# ✅ Alpaca API credentials
-ALPACA_API_KEY = "PKFJHEKY307EBXAKHY1H"
-ALPACA_SECRET_KEY = "bO5TmyDXN2g9rczJinhGSPngSoz3og4Ma4cNU2bo"
-# Trading API base
-BASE_URL = "https://paper-api.alpaca.markets"
-# Data API base for quotes/trades
-DATA_URL = "https://data.alpaca.markets/v2"
+# 🔐 Load secrets from .env
+ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+SHARED_SECRET = os.getenv("SHARED_SECRET")
 
+BASE_URL = 'https://paper-api.alpaca.markets'
 HEADERS = {
     'APCA-API-KEY-ID': ALPACA_API_KEY,
     'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY
 }
 
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    from flask import request, jsonify
+    import os
+
+    SHARED_SECRET = os.getenv("SHARED_SECRET")
     data = request.json
-    print("📩 Webhook received:", data)
 
-    ticker = data.get("ticker")
-    action = data.get("action")
-    qty = int(data.get("qty", 1))
-    use_oco = data.get("use_oco", False)
-    tp = data.get("take_profit")
-    sl = data.get("stop_loss")
+    if not data:
+        return jsonify({"error": "Missing JSON"}), 400
 
-    if action not in ["buy", "sell"]:
-        return jsonify({"error": "Invalid action"}), 400
+    if data.get("secret") != SHARED_SECRET:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    # Process logic (minimal test return)
+    return jsonify({"status": "success", "message": "Webhook received."})
 
     order_data = {
         "symbol": ticker,
@@ -52,4 +57,5 @@ def webhook():
     return jsonify(response.json())
 
 if __name__ == '__main__':
-    app.run(port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+
