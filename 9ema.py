@@ -47,6 +47,30 @@ def orders():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/test-discord", methods=["GET"])
+def test_discord():
+    timestamp = datetime.utcnow().isoformat()
+    embed = {
+        "title": "✅ Discord Webhook Test",
+        "color": 3066993,
+        "fields": [
+            {"name": "Status", "value": "Webhook is working", "inline": True},
+            {"name": "Time", "value": timestamp, "inline": True}
+        ],
+        "timestamp": timestamp
+    }
+    discord_payload = {"embeds": [embed]}
+
+    try:
+        if DISCORD_WEBHOOK_URL:
+            response = requests.post(DISCORD_WEBHOOK_URL, json=discord_payload)
+            response.raise_for_status()
+            return jsonify({"status": "success", "message": "Test alert sent to Discord."})
+        else:
+            return jsonify({"status": "error", "message": "DISCORD_WEBHOOK_URL not configured."}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     global last_entry_time
@@ -119,13 +143,16 @@ def webhook():
 
         if DISCORD_WEBHOOK_URL:
             color = 3066993 if action == "buy" else 15158332
+            emoji = "🚀" if action == "buy" else "🔻"
+            type_label = "Entry" if action == "buy" else "Trailing Exit"
+
             embed = {
-                "title": f"Trade Executed: {action.upper()} {qty}x {ticker}",
+                "title": f"{emoji} {action.upper()} {qty}x {ticker}",
                 "color": color,
                 "fields": [
                     {"name": "Position", "value": str(current_position), "inline": True},
                     {"name": "Time", "value": timestamp, "inline": True},
-                    {"name": "Type", "value": "Trailing Exit" if action == "sell" else "Entry", "inline": True}
+                    {"name": "Type", "value": type_label, "inline": True}
                 ],
                 "timestamp": timestamp
             }
