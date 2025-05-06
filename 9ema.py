@@ -158,3 +158,35 @@ def webhook():
 # === Run Flask App ===
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+
+import requests
+
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+
+def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
+    notion_url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+    payload = {
+        "parent": {"database_id": NOTION_DATABASE_ID},
+        "properties": {
+            "Ticker": {"title": [{"text": {"content": ticker}}]},
+            "Action": {"rich_text": [{"text": {"content": action}}]},
+            "Qty": {"number": qty},
+            "Price": {"number": price},
+            "PnL": {"number": pnl},
+            "Timestamp": {"date": {"start": timestamp}}
+        }
+    }
+    try:
+        res = requests.post(notion_url, headers=headers, json=payload)
+        res.raise_for_status()
+        print("✅ Trade logged to Notion")
+    except Exception as e:
+        print("❌ Failed to log trade to Notion:", e)
+
+log_trade_to_notion(ticker, action, qty, price, pnl, timestamp)
