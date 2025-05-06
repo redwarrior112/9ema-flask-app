@@ -52,30 +52,32 @@ def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
 
     payload = {
         "parent": { "database_id": NOTION_DATABASE_ID },
-        "properties": {
-            "Ticker": {
-                "title": [{
-                    "text": {
-                        "content": ticker
-                    }
-                }]
-            },
-            "Action": {
-                "rich_text": [{
-                    "text": {
-                        "content": action
-                    }
-                }]
-            },
-            "Qty": { "number": qty },
-            "Price": { "number": price },
-            "PnL": { "number": pnl },
-            "Timestamp": {
-                "date": {
-                    "start": timestamp
-                }
+"properties": {
+    "Ticker": {
+        "title": [
+            {
+                "text": { "content": ticker }
             }
+        ]
+    },
+    "Action": {
+        "select": {
+            "name": action  # Must match an existing option in your database
         }
+    },
+    "Qty": {
+        "number": qty
+    },
+    "Price": {
+        "number": price
+    },
+    "PnL": {
+        "number": pnl
+    },
+    "Timestamp": {
+        "date": { "start": timestamp }
+    }
+}
     }
 
     try:
