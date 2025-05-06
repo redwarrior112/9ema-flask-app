@@ -1,3 +1,18 @@
+import csv
+import os
+
+# 🔹 Add CSV logging function
+def log_trade_csv(ticker, action, qty, price, pnl, timestamp):
+    file_path = "trade_log.csv"
+    file_exists = os.path.isfile(file_path)
+
+    with open(file_path, mode="a", newline="") as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            writer.writerow(["Timestamp", "Ticker", "Action", "Qty", "Price", "PnL"])
+        writer.writerow([timestamp, ticker, action, qty, price, pnl])
+
+# 🔹 Replace your existing /webhook route with this:
 @app.route("/webhook", methods=["POST"])
 def webhook():
     global last_entry_time
@@ -30,6 +45,9 @@ def webhook():
     timestamp = datetime.utcnow().isoformat()
 
     print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker} @ {price} | PnL: {pnl}")
+
+    # 🔹 CSV log
+    log_trade_csv(ticker, action, qty, price, pnl, timestamp)
 
     # Check current position size
     position_resp = requests.get(f"{BASE_URL}/v2/positions/{ticker}", headers=HEADERS)
