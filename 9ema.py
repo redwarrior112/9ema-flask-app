@@ -1,76 +1,3 @@
-from flask import Flask, request, jsonify
-import os
-import requests
-import json
-from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
-
-app = Flask(__name__)
-
-ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
-ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
-SHARED_SECRET = os.getenv("SHARED_SECRET")
-BASE_URL = "https://paper-api.alpaca.markets"  # Trading API base
-DATA_URL = "https://data.alpaca.markets/v2"     # Data API base for quotes/trades
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-
-HEADERS = {
-    "APCA-API-KEY-ID": ALPACA_API_KEY,
-    "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
-}
-
-# Track current positions manually
-last_entry_time = None
-position_limit = 2
-
-@app.route("/", methods=["GET"])
-def home():
-    return "🚀 9EMA Webhook is Live and Trading"
-
-@app.route("/status", methods=["GET"])
-def status():
-    return jsonify({
-        "status": "online",
-        "alpaca_key_loaded": bool(ALPACA_API_KEY),
-        "timestamp": datetime.utcnow().isoformat()
-    })
-
-@app.route("/orders", methods=["GET"])
-def orders():
-    try:
-        response = requests.get(f"{BASE_URL}/v2/orders", headers=HEADERS)
-        response.raise_for_status()
-        orders = response.json()
-        return jsonify({"status": "success", "orders": orders})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route("/test-discord", methods=["GET"])
-def test_discord():
-    timestamp = datetime.utcnow().isoformat()
-    embed = {
-        "title": "✅ Discord Webhook Test",
-        "color": 3066993,
-        "fields": [
-            {"name": "Status", "value": "Webhook is working", "inline": True},
-            {"name": "Time", "value": timestamp, "inline": True}
-        ],
-        "timestamp": timestamp
-    }
-    discord_payload = {"embeds": [embed]}
-
-    try:
-        if DISCORD_WEBHOOK_URL:
-            response = requests.post(DISCORD_WEBHOOK_URL, json=discord_payload)
-            response.raise_for_status()
-            return jsonify({"status": "success", "message": "Test alert sent to Discord."})
-        else:
-            return jsonify({"status": "error", "message": "DISCORD_WEBHOOK_URL not configured."}), 500
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
 @app.route("/webhook", methods=["POST"])
 def webhook():
     global last_entry_time
@@ -98,9 +25,11 @@ def webhook():
     use_oco = data.get("use_oco", False)
     take_profit = data.get("take_profit")
     stop_loss = data.get("stop_loss")
+    price = float(data.get("price", 0))
+    pnl = float(data.get("pnl", 0))
     timestamp = datetime.utcnow().isoformat()
 
-    print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker}")
+    print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker} @ {price} | PnL: {pnl}")
 
     # Check current position size
     position_resp = requests.get(f"{BASE_URL}/v2/positions/{ticker}", headers=HEADERS)
@@ -150,7 +79,8 @@ def webhook():
                 "title": f"{emoji} {action.upper()} {qty}x {ticker}",
                 "color": color,
                 "fields": [
-                    {"name": "Position", "value": str(current_position), "inline": True},
+                    {"name": "Price", "value": f"${price:.2f}", "inline": True},
+                    {"name": "PnL", "value": f"${pnl:.2f}", "inline": True},
                     {"name": "Time", "value": timestamp, "inline": True},
                     {"name": "Type", "value": type_label, "inline": True}
                 ],
@@ -162,9 +92,14 @@ def webhook():
         return jsonify({"status": "success", "alpaca_response": result})
 
     except requests.exceptions.HTTPError as http_err:
-        return jsonify({"status": "error", "message": "Alpaca API Error", "details": str(http_err)}), 500
+        print("❌ Alpaca HTTP Error:", http_err)
+        print("🧾 Alpaca Response Text:", response.text)
+        return jsonify({
+            "status": "error",
+            "message": "Alpaca API Error",
+            "details": str(http_err),
+            "response": response.text
+        }), 500
+
     except Exception as e:
         return jsonify({"status": "error", "message": "Webhook Execution Error", "details": str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
