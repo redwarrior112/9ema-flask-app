@@ -1,18 +1,45 @@
-import csv
+from flask import Flask, request, jsonify
 import os
+import requests
+import json
+import csv
+from datetime import datetime
+from dotenv import load_dotenv
 
-# 🔹 Add CSV logging function
+# === Load environment variables ===
+load_dotenv()
+ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+SHARED_SECRET = os.getenv("SHARED_SECRET")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+BASE_URL = "https://paper-api.alpaca.markets"
+HEADERS = {
+    "APCA-API-KEY-ID": ALPACA_API_KEY,
+    "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
+}
+
+# === App setup ===
+app = Flask(__name__)
+last_entry_time = None
+position_limit = 2
+
+# === CSV Logging Function ===
 def log_trade_csv(ticker, action, qty, price, pnl, timestamp):
     file_path = "trade_log.csv"
     file_exists = os.path.isfile(file_path)
-
     with open(file_path, mode="a", newline="") as file:
         writer = csv.writer(file)
         if not file_exists:
             writer.writerow(["Timestamp", "Ticker", "Action", "Qty", "Price", "PnL"])
         writer.writerow([timestamp, ticker, action, qty, price, pnl])
 
-# 🔹 Replace your existing /webhook route with this:
+# === Home Page ===
+@app.route("/", methods=["GET"])
+def home():
+    return "✅ You Can Accomplish Anything With A Solid Plan ;)"
+
+# === Webhook Endpoint ===
 @app.route("/webhook", methods=["POST"])
 def webhook():
     global last_entry_time
@@ -33,7 +60,7 @@ def webhook():
     if data.get("secret") != SHARED_SECRET:
         return jsonify({"error": "Unauthorized"}), 403
 
-    # Parse info
+    # === Parse fields from webhook JSON ===
     ticker = data.get("ticker")
     action = data.get("action")
     qty = int(data.get("qty", 1))
@@ -46,10 +73,10 @@ def webhook():
 
     print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker} @ {price} | PnL: {pnl}")
 
-    # 🔹 CSV log
+    # === Log to CSV ===
     log_trade_csv(ticker, action, qty, price, pnl, timestamp)
 
-    # Check current position size
+    # === Check current position size ===
     position_resp = requests.get(f"{BASE_URL}/v2/positions/{ticker}", headers=HEADERS)
     current_position = 0
     if position_resp.status_code == 200:
@@ -67,7 +94,7 @@ def webhook():
     if action == "sell" and current_position == 0:
         return jsonify({"status": "skipped", "reason": "No position to exit"})
 
-    # Build order
+    # === Build order for Alpaca ===
     order = {
         "symbol": ticker,
         "qty": qty,
@@ -81,6 +108,7 @@ def webhook():
         order["take_profit"] = {"limit_price": float(take_profit)}
         order["stop_loss"] = {"stop_price": float(stop_loss)}
 
+    # === Submit order to Alpaca ===
     try:
         response = requests.post(f"{BASE_URL}/v2/orders", json=order, headers=HEADERS)
         response.raise_for_status()
@@ -88,6 +116,7 @@ def webhook():
 
         print("🛰️ Alpaca Response:", json.dumps(result, indent=2))
 
+        # === Optional: Send Discord Notification ===
         if DISCORD_WEBHOOK_URL:
             color = 3066993 if action == "buy" else 15158332
             emoji = "🚀" if action == "buy" else "🔻"
@@ -120,4 +149,12 @@ def webhook():
         }), 500
 
     except Exception as e:
-        return jsonify({"status": "error", "message": "Webhook Execution Error", "details": str(e)}), 500
+        return jsonify({
+            "status": "error",
+            "message": "Webhook Execution Error",
+            "details": str(e)
+        }), 500
+
+# === Run Flask App ===
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
