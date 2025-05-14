@@ -21,12 +21,10 @@ HEADERS = {
     "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
 }
 
-# === Flask App ===
 app = Flask(__name__)
 last_entry_time = None
 position_limit = 2
 
-# === CSV Logging ===
 def log_trade_csv(ticker, action, qty, price, pnl, timestamp):
     file_path = "trade_log.csv"
     file_exists = os.path.isfile(file_path)
@@ -35,12 +33,6 @@ def log_trade_csv(ticker, action, qty, price, pnl, timestamp):
         if not file_exists:
             writer.writerow(["Timestamp", "Ticker", "Action", "Qty", "Price", "PnL"])
         writer.writerow([timestamp, ticker, action, qty, price, pnl])
-
-import os
-import requests
-
-NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
 def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
     url = "https://api.notion.com/v1/pages"
@@ -51,33 +43,15 @@ def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
     }
 
     payload = {
-        "parent": { "database_id": NOTION_DATABASE_ID },
-"properties": {
-    "Ticker": {
-        "title": [
-            {
-                "text": { "content": ticker }
-            }
-        ]
-    },
-    "Action": {
-        "select": {
-            "name": action  # Must match an existing option in your database
+        "parent": {"database_id": NOTION_DATABASE_ID},
+        "properties": {
+            "Ticker": {"title": [{"text": {"content": ticker}}]},
+            "Action": {"select": {"name": action}},
+            "Qty": {"number": qty},
+            "Price": {"number": price},
+            "PnL": {"number": pnl},
+            "Timestamp": {"date": {"start": timestamp}}
         }
-    },
-    "Qty": {
-        "number": qty
-    },
-    "Price": {
-        "number": price
-    },
-    "PnL": {
-        "number": pnl
-    },
-    "Timestamp": {
-        "date": { "start": timestamp }
-    }
-}
     }
 
     try:
@@ -86,22 +60,30 @@ def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
         print("✅ Trade logged to Notion")
     except Exception as e:
         print("❌ Notion logging failed:", e)
-        print("📦 Response:", getattr(e.response, "text", "No response"))
 
-# === Home Endpoint ===
+# === Fetch latest price for capital-based sizing ===
+def get_latest_price(symbol):
+    try:
+        quote_url = f"https://data.alpaca.markets/v2/stocks/{symbol}/quotes/latest"
+        response = requests.get(quote_url, headers=HEADERS)
+        response.raise_for_status()
+        quote = response.json()
+        ask_price = float(quote.get("askprice"))
+        return ask_price if ask_price > 0 else None
+    except Exception as e:
+        print(f"⚠️ Failed to fetch price for {symbol}: {e}")
+        return None
+
 @app.route("/", methods=["GET"])
 def home():
     return "✅ You Can Accomplish Anything With A Solid Plan ;)"
 
-# === Webhook Endpoint ===
 @app.route("/webhook", methods=["POST"])
 def webhook():
     global last_entry_time
 
-    print("📩 Headers received:")
-    print(dict(request.headers))
-    print("📦 Raw body:")
-    print(request.data)
+    print("📩 Headers received:", dict(request.headers))
+    print("📦 Raw body:", request.data)
 
     try:
         data = request.get_json(force=True)
@@ -113,10 +95,8 @@ def webhook():
     if data.get("secret") != SHARED_SECRET:
         return jsonify({"error": "Unauthorized"}), 403
 
-    # === Parse Payload ===
     ticker = data.get("ticker")
     action = data.get("action")
-    qty = int(data.get("qty", 1))
     use_oco = data.get("use_oco", False)
     take_profit = data.get("take_profit")
     stop_loss = data.get("stop_loss")
@@ -124,13 +104,21 @@ def webhook():
     pnl = float(data.get("pnl", 0))
     timestamp = datetime.utcnow().isoformat()
 
+    # Capital-Based Position Sizing
+    target_capital = 500.0  # Example $500 allocation
+    latest_price = get_latest_price(ticker)
+
+    if latest_price:
+        qty = max(int(target_capital // latest_price), 1)
+        print(f"📊 Calculated Quantity: {qty} shares at ${latest_price:.2f} for target ${target_capital}")
+    else:
+        return jsonify({"error": "Failed to fetch latest price for quantity calculation"}), 500
+
     print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker} @ {price} | PnL: {pnl}")
 
-    # === Log to CSV & Notion ===
     log_trade_csv(ticker, action, qty, price, pnl, timestamp)
     log_trade_to_notion(ticker, action, qty, price, pnl, timestamp)
 
-    # === Position Check ===
     current_position = 0
     try:
         pos_resp = requests.get(f"{BASE_URL}/v2/positions/{ticker}", headers=HEADERS)
@@ -153,7 +141,6 @@ def webhook():
     if action == "sell" and current_position == 0:
         return jsonify({"status": "skipped", "reason": "No position to exit"})
 
-    # === Alpaca Order ===
     order = {
         "symbol": ticker,
         "qty": qty,
@@ -173,7 +160,6 @@ def webhook():
         result = response.json()
         print("🛰️ Alpaca Response:", json.dumps(result, indent=2))
 
-        # === Discord Alert ===
         if DISCORD_WEBHOOK_URL:
             color = 3066993 if action == "buy" else 15158332
             emoji = "🚀" if action == "buy" else "🔻"
@@ -209,6 +195,6 @@ def webhook():
             "details": str(e)
         }), 500
 
-# === Start App ===
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+
