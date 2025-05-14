@@ -67,8 +67,8 @@ def get_latest_price(symbol):
         quote_url = f"https://data.alpaca.markets/v2/stocks/{symbol}/quotes/latest"
         response = requests.get(quote_url, headers=HEADERS)
         response.raise_for_status()
-        quote = response.json()
-        ask_price = float(quote.get("askprice"))
+        quote_data = response.json()
+        ask_price = float(quote_data.get("quote", {}).get("ap"))
         return ask_price if ask_price > 0 else None
     except Exception as e:
         print(f"⚠️ Failed to fetch price for {symbol}: {e}")
@@ -197,4 +197,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
-
