@@ -105,7 +105,7 @@ def webhook():
     timestamp = datetime.utcnow().isoformat()
 
     # Capital-Based Position Sizing
-    target_capital = 500.0  # Example $500 allocation
+    target_capital = 1000.0  # Example $500 allocation
     latest_price = get_latest_price(ticker)
 
     if latest_price:
