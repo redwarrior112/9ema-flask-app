@@ -1,12 +1,8 @@
 from flask import Flask, request, jsonify
-import os
-import requests
-import json
-import csv
+import os, requests, json, csv
 from datetime import datetime
 from dotenv import load_dotenv
 
-# === Load environment variables ===
 load_dotenv()
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
@@ -16,14 +12,18 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
 BASE_URL = "https://paper-api.alpaca.markets"
+ORDER_URL = f"{BASE_URL}/v2/orders"
+MARKET_URL = "https://data.alpaca.markets"
+
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
     "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
 }
 
+MARKET_HEADERS = HEADERS.copy()
+
 app = Flask(__name__)
 last_entry_time = None
-position_limit = 2
 
 def log_trade_csv(ticker, action, qty, price, pnl, timestamp):
     file_path = "trade_log.csv"
@@ -41,7 +41,6 @@ def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28"
     }
-
     payload = {
         "parent": {"database_id": NOTION_DATABASE_ID},
         "properties": {
@@ -53,7 +52,6 @@ def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
             "Timestamp": {"date": {"start": timestamp}}
         }
     }
-
     try:
         res = requests.post(url, headers=headers, json=payload)
         res.raise_for_status()
@@ -61,14 +59,13 @@ def log_trade_to_notion(ticker, action, qty, price, pnl, timestamp):
     except Exception as e:
         print("❌ Notion logging failed:", e)
 
-# === Fetch latest price for capital-based sizing ===
 def get_latest_price(symbol):
     try:
-        quote_url = f"https://data.alpaca.markets/v2/stocks/{symbol}/quotes/latest"
-        response = requests.get(quote_url, headers=HEADERS)
+        url = f"{MARKET_URL}/v2/stocks/{symbol}/quotes/latest"
+        response = requests.get(url, headers=MARKET_HEADERS)
         response.raise_for_status()
-        quote_data = response.json()
-        ask_price = float(quote_data.get("quote", {}).get("ap"))
+        data = response.json()
+        ask_price = float(data.get("quote", {}).get("ap", 0))
         return ask_price if ask_price > 0 else None
     except Exception as e:
         print(f"⚠️ Failed to fetch price for {symbol}: {e}")
@@ -80,11 +77,6 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    global last_entry_time
-
-    print("📩 Headers received:", dict(request.headers))
-    print("📦 Raw body:", request.data)
-
     try:
         data = request.get_json(force=True)
         if not data:
@@ -95,67 +87,42 @@ def webhook():
     if data.get("secret") != SHARED_SECRET:
         return jsonify({"error": "Unauthorized"}), 403
 
-    ticker = data.get("ticker")
-    action = data.get("action")
-    use_oco = data.get("use_oco", False)
-    take_profit = data.get("take_profit")
-    stop_loss = data.get("stop_loss")
-    price = float(data.get("price", 0))
-    pnl = float(data.get("pnl", 0))
-    timestamp = datetime.utcnow().isoformat()
-
-    # Capital-Based Position Sizing
-    target_capital = 1000.0  # Example $500 allocation
-    latest_price = get_latest_price(ticker)
-
-    if latest_price:
-        qty = max(int(target_capital // latest_price), 1)
-        print(f"📊 Calculated Quantity: {qty} shares at ${latest_price:.2f} for target ${target_capital}")
-    else:
-        return jsonify({"error": "Failed to fetch latest price for quantity calculation"}), 500
-
-    print(f"📩 [{timestamp}] New trade: {action.upper()} {qty}x {ticker} @ {price} | PnL: {pnl}")
-
-    log_trade_csv(ticker, action, qty, price, pnl, timestamp)
-    log_trade_to_notion(ticker, action, qty, price, pnl, timestamp)
-
-    current_position = 0
     try:
-        pos_resp = requests.get(f"{BASE_URL}/v2/positions/{ticker}", headers=HEADERS)
-        if pos_resp.status_code == 200:
-            pos_data = pos_resp.json()
-            current_position = int(float(pos_data.get("qty", 0)))
-        elif pos_resp.status_code == 404:
-            print(f"ℹ️ No open position for {ticker}")
-    except Exception as e:
-        print("❌ Failed to get position:", e)
+        ticker    = data.get("ticker")
+        action    = data.get("action").lower()
+        price     = float(data.get("price", 0))
+        pnl       = float(data.get("pnl", 0))
+        timestamp = datetime.utcnow().isoformat()
+        use_oco   = data.get("use_oco", False)
+        tp        = data.get("take_profit")
+        sl        = data.get("stop_loss")
 
-    if action == "buy":
-        now = datetime.utcnow().replace(second=0, microsecond=0)
-        if last_entry_time == now:
-            return jsonify({"status": "skipped", "reason": "Already entered this bar"})
-        if current_position >= position_limit:
-            return jsonify({"status": "skipped", "reason": "Position limit reached"})
-        last_entry_time = now
+        latest_price = get_latest_price(ticker)
+        if latest_price:
+            target_capital = 1000.0
+            qty = max(int(target_capital // latest_price), 1)
+            print(f"📊 Using calculated qty: {qty} @ ${latest_price:.2f}")
+        else:
+            qty = int(data.get("qty", 1))
+            print(f"⚠️ Falling back to TradingView qty: {qty}")
 
-    if action == "sell" and current_position == 0:
-        return jsonify({"status": "skipped", "reason": "No position to exit"})
+        log_trade_csv(ticker, action, qty, price, pnl, timestamp)
+        log_trade_to_notion(ticker, action, qty, price, pnl, timestamp)
 
-    order = {
-        "symbol": ticker,
-        "qty": qty,
-        "side": action,
-        "type": "market",
-        "time_in_force": "gtc"
-    }
+        order = {
+            "symbol": ticker,
+            "qty": qty,
+            "side": action,
+            "type": "market",
+            "time_in_force": "gtc"
+        }
 
-    if use_oco and take_profit and stop_loss:
-        order["order_class"] = "bracket"
-        order["take_profit"] = {"limit_price": float(take_profit)}
-        order["stop_loss"] = {"stop_price": float(stop_loss)}
+        if use_oco and tp and sl:
+            order["order_class"] = "bracket"
+            order["take_profit"] = {"limit_price": float(tp)}
+            order["stop_loss"]   = {"stop_price": float(sl)}
 
-    try:
-        response = requests.post(f"{BASE_URL}/v2/orders", json=order, headers=HEADERS)
+        response = requests.post(ORDER_URL, json=order, headers=HEADERS)
         response.raise_for_status()
         result = response.json()
         print("🛰️ Alpaca Response:", json.dumps(result, indent=2))
@@ -179,7 +146,6 @@ def webhook():
         return jsonify({"status": "success", "alpaca_response": result})
 
     except requests.exceptions.HTTPError as http_err:
-        print("❌ Alpaca HTTP error:", http_err)
         return jsonify({
             "status": "error",
             "message": "Alpaca API Error",
@@ -188,7 +154,6 @@ def webhook():
         }), 500
 
     except Exception as e:
-        print("❌ Unexpected error:", e)
         return jsonify({
             "status": "error",
             "message": "Webhook Execution Error",
@@ -197,3 +162,4 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+
